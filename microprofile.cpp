@@ -6560,7 +6560,7 @@ void MicroProfileDumpToFile()
 #if MICROPROFILE_LEGACY_CSV
 		MicroProfileDumpCsvLegacy();
 #else
-		MicroProfileDumpCsv(S.DumpFrameCountHTML);
+		MicroProfileDumpCsv(S.DumpFrameCountCSV);
 #endif
 	}
 }
