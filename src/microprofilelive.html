@@ -482,6 +482,7 @@ let IsFrozen = 0;
 
 let PresetToLoad;
 let PresetToLoadRO = 0;
+let PresetWanted = null;
 let HelpFade;
 
 
@@ -3428,16 +3429,90 @@ function ColorFromFullName(name, type)
 	return 'white';
 
 }
-function EnableByName(name, type)
+
+
+function PresetWantedSet(NewSettings)
+{
+	PresetWanted = {};
+	let Fill = function(type, Names)
+	{
+		let Dst = PresetWanted[type] = {};
+		if(!Names)
+		{
+			return;
+		}
+		for(let i = 0; i < Names.length; ++i)
+		{
+			Dst[Names[i]] = 1;
+		}
+	};
+	Fill(TYPE_TIMER, NewSettings.Timers);
+	Fill(TYPE_GROUP, NewSettings.Groups);
+	Fill(TYPE_COUNTER, NewSettings.Counters);
+	for(let i = 0; i < TimerArray.length; ++i)
+	{
+		TimerArray[i].presetreq = 0;
+		TimerArray[i].presetreqcount = 0;
+	}
+}
+
+function PresetApplyToEntry(idx)
+{
+	if(!PresetWanted)
+	{
+		return;
+	}
+	let t = TimerArray[idx];
+	let Wanted = PresetWanted[t.idtype];
+	if(!Wanted)
+	{
+		return;
+	}
+	if(!Wanted[GetFullName(t)])
+	{
+		return;
+	}
+	// "c" toggles, and the server keeps the three types in three different stores, so the
+	// local mirror cannot be trusted: a group is pre-enabled by nStartEnabled when it
+	// registers and can then be cleared again by a "d" that has not been processed yet
+	// (MicroProfileWebSocketReceive handles one message per flip). Only request while the
+	// server reports the entry off, and keep one toggle in flight at a time.
+	if(t.e)
+	{
+		t.presetreq = 0;
+		return;
+	}
+	if(t.presetreq || t.presetreqcount >= 4)
+	{
+		return;
+	}
+	t.presetreq = 1;
+	t.presetreqcount = (t.presetreqcount || 0) + 1;
+	WSSendMessage("c" + t.id);
+}
+
+function PresetApplyToAll()
+{
+	for(var i = 0; i < TimerArray.length; ++i)
+	{
+		PresetApplyToEntry(i);
+	}
+}
+
+function PresetClearLocalEnabled()
 {
 	for(var i = 0; i < TimerArray.length; ++i)
 	{
 		var t = TimerArray[i];
-		if(t.idtype == type && GetFullName(t) == name)
+		if(t.idtype == TYPE_TIMER || t.idtype == TYPE_GROUP || t.idtype == TYPE_COUNTER)
 		{
-			WSSendMessage("c" + t.id);
+			t.e = 0;
+			t.presetreq = 0;
 		}
 	}
+	EnabledArray = [];
+	AutoCaptureSourceIndex = -1;
+	UpdateActive();
 }
 
 
@@ -3447,54 +3522,19 @@ function OnLoadPreset(NewSettings, Apply, RO, Name)
 	{
 		WSSendMessage("d");
 		PresetPending = 0;
+		PresetClearLocalEnabled();
 	}
 	ActivePreset = Name ? Name : NewSettings.PresetName;
 	ActivePresetRO = RO ? 1 : 0;
 	console.log('loading preset ' + ActivePresetRO);
-	var EnableCount = 0;
 	for(var idx in NewSettings)
 	{
-		if(idx == 'Timers')
-		{
-			if(Apply)
-			{
-				var Timers = NewSettings[idx];
-				for(var i = 0; i < Timers.length; ++i)
-				{
-					var FullName = Timers[i];
-					EnableCount++;
-					EnableByName(FullName, TYPE_TIMER);
-				}
-			}
-		}
-		else if(idx == 'Groups')
-		{
-			if(Apply)
-			{
-				var Groups = NewSettings[idx];
-				for(var i = 0; i < Groups.length; ++i)
-				{
-					var FullName = Groups[i];
-					EnableByName(FullName, TYPE_GROUP);
-				}
-			}
-		}
-		else if(idx == 'Counters')
-		{
-			if(Apply)
-			{
-				var Counters = NewSettings[idx];
-				for(var i = 0; i < Counters.length; ++i)
-				{
-					var FullName = Counters[i];
-					EnableByName(FullName, TYPE_COUNTER);
-				}
-			}
-		}
-		else
-		{
-			Settings[idx] = NewSettings[idx];
-		}
+		Settings[idx] = NewSettings[idx];
+	}
+	if(Apply)
+	{
+		PresetWantedSet(NewSettings);
+		PresetApplyToAll();
 	}
 
 	if(Settings.FunctionsInstrumented && Apply)
@@ -6221,6 +6261,7 @@ function EnableTimer(T)
 	{
 		TimerArray[idx].e = T.e;
 		UpdateEnabledTimer(idx);
+		PresetApplyToEntry(idx);
 	}
 	else
 	{
@@ -6348,6 +6389,7 @@ function AddTimer(T)
 		}
 
 	}
+	PresetApplyToEntry(idx);
 	RequestDraw();
 }
 
